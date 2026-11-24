@@ -14,15 +14,17 @@ CACHE_PREFIX = "tollgate:cache:"
 
 def build_cache_key(
     *,
+    provider: str,
     model: str,
     messages: Sequence[ProviderMessage],
     temperature: float,
     top_p: float,
     max_tokens: int | None,
 ) -> str:
-    """Hash of the canonical request. Only role+content are included, in order."""
+    """Hash of the canonical request. Provider, model, and role+content messages, in order."""
     canonical = canonical_json(
         {
+            "provider": provider,
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "temperature": float(temperature),

@@ -205,6 +205,7 @@ async def create_chat(
     cache_key: str | None = None
     if cacheable:
         cache_key = build_cache_key(
+            provider=att.provider.name,
             model=att.model,
             messages=att.messages,
             temperature=body.temperature,

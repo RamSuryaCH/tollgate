@@ -77,11 +77,33 @@ async def test_key_with_cache_disabled_never_hits(client: httpx.AsyncClient, mak
 
 def test_cache_key_is_order_stable_and_sensitive_to_inputs() -> None:
     msgs = (ProviderMessage("user", "hi"),)
-    base = build_cache_key(model="m", messages=msgs, temperature=0, top_p=1, max_tokens=None)
-    same = build_cache_key(model="m", messages=msgs, temperature=0.0, top_p=1.0, max_tokens=None)
-    other_model = build_cache_key(model="n", messages=msgs, temperature=0, top_p=1, max_tokens=None)
-    other_tokens = build_cache_key(model="m", messages=msgs, temperature=0, top_p=1, max_tokens=5)
+    kw = dict(provider="mock", model="m", messages=msgs, temperature=0, top_p=1, max_tokens=None)
+    base = build_cache_key(**kw)
+    same = build_cache_key(
+        provider="mock", model="m", messages=msgs, temperature=0.0, top_p=1.0, max_tokens=None
+    )
+    other_model = build_cache_key(**{**kw, "model": "n"})
+    other_tokens = build_cache_key(**{**kw, "max_tokens": 5})
+    other_provider = build_cache_key(**{**kw, "provider": "ollama"})
     assert base == same
     assert base != other_model
     assert base != other_tokens
+    assert base != other_provider
     assert base.startswith(CACHE_PREFIX)
+
+
+def test_cache_key_includes_provider() -> None:
+    """A cached mock reply must not be served after switching DEFAULT_PROVIDER."""
+    msgs = (ProviderMessage("user", "hi"),)
+    mock = build_cache_key(
+        provider="mock", model="llama3.2:3b", messages=msgs, temperature=0, top_p=1, max_tokens=None
+    )
+    ollama = build_cache_key(
+        provider="ollama",
+        model="llama3.2:3b",
+        messages=msgs,
+        temperature=0,
+        top_p=1,
+        max_tokens=None,
+    )
+    assert mock != ollama
