@@ -1,8 +1,10 @@
 # Tollgate
 
-Tollgate is a small, self-hosted gateway with an OpenAI-style `/v1/chat` endpoint. It sits in front of a local model (Ollama by default, or a mock provider, or an optional OpenAI-compatible endpoint) and adds per-key rate limits, an exact-match response cache, and usage tracking in Postgres. It uses no paid services. A Next.js web UI gives a chat playground, a usage dashboard, and key management.
+Self-hosted OpenAI-style chat gateway with per-key rate limits, exact-match response caching, and usage tracking — no paid services required.
 
-It is a portfolio project. It is not a production multi-tenant service. The limits section lists what it does not do.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg)](https://www.python.org/)
+[![Next.js 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 
 ## Architecture
 
@@ -18,169 +20,107 @@ flowchart LR
   Provider --> OpenAI["OpenAI-compatible endpoint (optional)"]
 ```
 
-Request path for `POST /v1/chat`:
+`POST /v1/chat` authenticates a hashed API key, takes one token from that key's Redis token bucket, serves an exact-match cache hit when the request is cacheable, otherwise calls the provider, then writes the request log, usage rollup, and conversation turns to Postgres.
 
-1. Authenticate the Bearer key. Revoked and unknown keys get 401.
-2. Take one token from the key's bucket. An empty bucket returns 429 with `Retry-After`. If Redis is down, the request fails closed with 503.
-3. If `conversation_id` is given, check that the conversation belongs to this key.
-4. For cacheable requests, look up the cache. A hit returns `X-Cache: HIT`.
-5. Otherwise call the provider. Non-stream replies are stored in the cache when the request was cacheable (`X-Cache: MISS`). Other requests get `X-Cache: BYPASS`.
-6. Write the request log, usage rollup, and conversation turns to Postgres.
+## Demo
+
+Cache **MISS**, then **HIT** on the same request, then **429** when a key's bucket is empty. Recorded against the local stack: Postgres 17, Redis 8, and Ollama `llama3.2:3b`.
+
+![curl demo: X-Cache MISS, then HIT, then HTTP 429](docs/demo-curl.gif)
+
+The web UI is a small Next.js app: a streaming playground, a usage dashboard, and API key management.
+
+![Chat playground with a cache HIT](docs/playground.png)
+
+![Usage dashboard with request counts, cache-hit rate, and recent logs](docs/usage-dashboard.png)
+
+![API key management](docs/keys.png)
+
+Screenshots are from the local stack (Next.js production build + FastAPI + Ollama) on 24 Nov 2026.
 
 ## Quickstart
 
-Docker is the intended path, but it was not available on the machine where this project was developed. The Compose file and the two Dockerfiles have not been run. The local path below is the one that was verified.
-
-### Option A: Docker Compose (not tested in this repo yet)
+**Requirements:** Python 3.12+, Node 20+, Postgres 17, and Redis on `127.0.0.1`. For a local model, [Ollama](https://ollama.com) with `llama3.2:3b`. For a model-free run, set `DEFAULT_PROVIDER=mock`.
 
 ```bash
-cp .env.example .env
-# Edit .env. Set ADMIN_API_KEY to a non-default value. APP_ENV defaults to production in
-# Compose, and the API refuses to start in production with the default admin key.
-docker compose up --build                     # API, Postgres, Redis
-docker compose --profile ollama up --build    # also runs Ollama
-docker compose exec ollama ollama pull llama3.2:3b
-docker compose --profile web up --build       # also runs the web UI on http://localhost:3000
+cp .env.example .env          # set ADMIN_API_KEY; optionally DEFAULT_PROVIDER=mock
+make setup                    # .venv and Python deps
+make migrate && make seed     # seed prints a demo key and writes .demo-key (gitignored)
+make dev                      # API at http://localhost:8000
+npm --prefix web install && make dev-web   # UI at http://localhost:3000
 ```
 
-With no Ollama, set `DEFAULT_PROVIDER=mock` in `.env` before `docker compose up`.
+Open http://localhost:3000, paste the demo key, and send a message. Create more keys on the Keys page with the admin key.
 
-### Option B: local, no Docker
+**Docker** is the intended production-style path (`docker compose up --build`, plus `--profile ollama` and `--profile web`), but Docker was not available on the development machine, so Compose and the Dockerfiles have not been run. Set a non-default `ADMIN_API_KEY` before Compose: the API refuses to start in production with the default admin key.
 
-Verified on the development machine with system Postgres 17 and Redis 8 on 127.0.0.1.
+## Latency (measured)
 
-1. Copy the environment file and set a real admin key:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `ADMIN_API_KEY`. For a model-free start, set `DEFAULT_PROVIDER=mock`. For Ollama, install it, run `ollama pull llama3.2:3b`, and keep `DEFAULT_PROVIDER=ollama`.
-2. Create the databases and role (default URLs in `.env.example`):
-   ```sql
-   CREATE ROLE tollgate LOGIN PASSWORD 'tollgate' CREATEDB;
-   CREATE DATABASE tollgate OWNER tollgate;
-   CREATE DATABASE tollgate_test OWNER tollgate;
-   ```
-3. Start Postgres and Redis on 127.0.0.1:5432 and 127.0.0.1:6379.
-4. Install the Python side and run migrations:
-   ```bash
-   make setup        # creates .venv and installs the package with dev extras
-   make migrate
-   make seed         # optional: writes a demo key to .demo-key (gitignored)
-   ```
-5. Install the web dependencies and run both servers:
-   ```bash
-   npm --prefix web install
-   make dev          # API on http://localhost:8000
-   make dev-web      # UI on http://localhost:3000
-   ```
-6. Open http://localhost:3000, save an API key in the top bar, and send a message. Create keys on the Keys page with the admin key.
+Measured on **24 Nov 2026** on the development machine: **x86_64 Linux** (Debian 13, Intel Xeon, 8 cores, 16 GB RAM), **not an Apple Silicon Mac**.
+
+Method: `POST /v1/chat` from the same host with Python `httpx`, wall-clock from request send to full JSON body received. `temperature=0`, `stream=false`, `max_tokens=16`, model `llama3.2:3b`. Uvicorn + Postgres 17 + Redis 8 on `127.0.0.1`, no Docker, no proxy. MISS uses a unique prompt each time. HIT repeats one already-cached prompt. Percentiles use linear interpolation over the sorted sample; warmup requests are discarded. The Ollama model was already loaded (`llama3.2:3b`, Q4_K_M).
+
+| Provider | Cache | N | Warmup discarded | p50 (ms) | p95 (ms) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| mock (in-process) | MISS | 100 | 5 | 8.05 | 10.14 |
+| mock (in-process) | HIT | 100 | 5 | 7.63 | 8.96 |
+| llama3.2:3b (Ollama) | MISS | 20 | 3 | 188.65 | 213.07 |
+| llama3.2:3b (Ollama) | HIT | 20 | 3 | 7.72 | 11.67 |
+
+A cache hit still writes a request log and conversation turns to Postgres, so mock HIT and MISS are close: the mock provider is already in-process. The cache matters when the model call is the expensive part. These numbers are for a short completion (`max_tokens=16`); a longer MISS would be slower.
 
 ## API examples
 
-Set the admin key from `.env`, then create a key. The response contains `key`, which is shown only once.
-
 ```bash
-export ADMIN=change-me-admin   # your ADMIN_API_KEY
+export ADMIN=…   # ADMIN_API_KEY
 curl -s -X POST http://localhost:8000/v1/admin/keys \
   -H "X-Admin-Key: $ADMIN" -H "Content-Type: application/json" \
   -d '{"name":"laptop","rate_limit_rpm":60,"cache_enabled":true}'
-export KEY=tg_...   # the "key" value from the response
+export KEY=tg_…  # the "key" field; shown only once
 ```
 
 A cacheable request (`temperature` 0, not streamed) returns `X-Cache: MISS` the first time and `X-Cache: HIT` when repeated unchanged:
 
 ```bash
 BODY='{"messages":[{"role":"user","content":"Say hi"}],"temperature":0,"stream":false}'
-curl -s -i -X POST http://localhost:8000/v1/chat \
-  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d "$BODY" \
-  | grep -iE "^HTTP|^x-cache|conversation_id"
-# first call:  x-cache: MISS
-# second call: x-cache: HIT
+curl -sS -D- -o /tmp/tg-body.json -X POST http://localhost:8000/v1/chat \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d "$BODY"
 ```
 
-Rate limit: create a key with `"rate_limit_rpm":1`, then send two requests quickly. The second returns 429:
+A key with `"rate_limit_rpm": 1` returns `429` and `Retry-After` on the second immediate request. `stream: true` returns `text/event-stream` chunks and ends with `data: [DONE]` (`X-Cache: BYPASS`).
 
-```bash
-export KEY1=tg_...   # key created with rate_limit_rpm 1
-curl -s -i -X POST http://localhost:8000/v1/chat \
-  -H "Authorization: Bearer $KEY1" -H "Content-Type: application/json" -d "$BODY" \
-  | grep -iE "^HTTP|retry-after|detail"
-# HTTP/1.1 429 Too Many Requests
-# retry-after: <seconds>
-# {"detail":"Rate limit exceeded"}
-```
-
-Streaming: `stream: true` returns `text/event-stream`. Each `data:` line is a `chat.completion.chunk`, and the stream ends with `data: [DONE]`.
-
-```bash
-curl -N -X POST http://localhost:8000/v1/chat \
-  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Stream a reply"}],"stream":true}'
-```
-
-Other endpoints: `GET /healthz`, `GET /v1/usage/summary?from=&to=`, `GET /v1/usage/recent?limit=50`, `GET /v1/keys`, `POST /v1/admin/keys`, `POST /v1/keys/{id}/revoke`. Usage and key listing accept either a user key (own data only) or the admin key (all keys).
+Other endpoints: `GET /healthz`, `GET /v1/usage/summary`, `GET /v1/usage/recent`, `GET /v1/keys`, `POST /v1/keys/{id}/revoke`.
 
 ## Design decisions
 
-**Token bucket in Lua.** Each key has a bucket with capacity equal to its `rate_limit_rpm` and refill of rpm per 60 seconds. The refill and the token consumption run in one Lua script on Redis. Two concurrent requests cannot both read the same token count and both spend the last token. The script takes its clock from Redis `TIME`, so app-server clock skew does not matter.
+**Token bucket in Lua.** Each key has a bucket with capacity equal to its `rate_limit_rpm` and a refill of rpm per 60 seconds. Refill and consume run in one Lua script on Redis, so two concurrent requests cannot both spend the last token. The script uses Redis `TIME`. If Redis is down, chat fails closed with 503.
 
-**Cache key.** The cache key is `sha256` of the canonical JSON (sorted keys) of `model`, `messages` (role and content, in order), `temperature`, `top_p`, and `max_tokens`. A missing `temperature` counts as 0, so it is cacheable.
+**Cache key.** `sha256` of the canonical JSON (sorted keys) of `provider`, `model`, `messages` (role and content, in order), `temperature`, `top_p`, and `max_tokens`. A missing `temperature` counts as 0 and is cacheable. The provider name is included so a cached mock (or Ollama) reply is not served after you switch `DEFAULT_PROVIDER`.
 
-**What is not cached.** These requests get `X-Cache: BYPASS` and are never looked up or stored:
+**What is not cached.** These get `X-Cache: BYPASS` and are never looked up or stored: streamed requests, `temperature` other than 0, and keys with `cache_enabled: false`.
 
-- streamed requests (`stream: true`);
-- requests with `temperature` other than 0;
-- requests from a key with `cache_enabled: false`.
+**Cache hits still persist.** A hit writes the conversation turns and a request log. `request_logs` and `usage_daily` record 0 tokens for a hit (no new generation). The JSON body still returns the cached `usage` counts.
 
-**Cache hits still persist.** A hit writes the conversation turns and a request log. `request_logs` and `usage_daily` record 0 tokens for a hit, because no tokens were generated. The JSON body still returns the cached `usage` counts, which describe the original generation.
+**Cache is shared across keys.** The cache key does not include the API key id. If key A and key B send the same cacheable request, key B can receive key A's cached reply. Set `cache_enabled: false` on keys that must not share replies.
 
-**Cache is shared across keys.** The cache key does not include the API key id. If key A asks a question and key B later asks the same question with the same parameters, key B receives key A's cached reply. Set `cache_enabled: false` on keys that must not share replies. This is a real limitation, not a multi-tenant design.
+## Honest limits
 
-**Cache ignores the provider.** The cache key does not include the provider name. After you change `DEFAULT_PROVIDER`, cached replies from the old provider can still be served until the TTL (`CACHE_TTL_SECONDS`, default 3600) expires.
+- Docker Compose and both Dockerfiles have not been built or run in this repository. They are shipped for other machines; local verification used system Postgres and Redis.
+- No arm64 Mac run. Development and the latency table above are from an x86_64 Linux box. Images are official multi-arch tags with no `platform: linux/amd64` pin, but that was not executed here.
+- The optional OpenAI-compatible provider is implemented and wired but was not live-tested (no upstream URL or key).
+- The cache is shared across API keys, as noted above. There is no multi-tenant isolation, SSO, or billing.
+- Conversation transcripts in the web UI live in the tab. The server stores turns, but the UI has no endpoint to reload them.
+- CI is not wired. There is no GitHub Actions workflow.
 
-**Usage numbers.** `cache_hit_rate` is hits divided by requests. `p95_latency_ms` is computed from `request_logs.latency_ms` and is `null` when the window has no requests. Streamed requests record token counts from the provider when it reports them. Otherwise the server estimates them.
-
-## Web UI
-
-- **Playground (`/`)**: transcript with live token streaming, Enter to send and Shift+Enter for a newline, model, temperature, max tokens, and stream settings, and a New chat button. Each reply shows its `X-Cache` value and token counts for non-streamed replies. A 429 shows `Retry-After`.
-- **Usage (`/usage`)**: summary cards and the latest 50 requests. The date range applies to the summary only, because the recent-requests endpoint takes only a limit.
-- **Keys (`/keys`)**: admin key entry, key creation (the plaintext is shown once with a copy button), a key table, and revoke.
-
-The browser stores the API key and the admin key in `localStorage` under `tollgate.apiKey` and `tollgate.adminKey`. Any script running on the page can read them. Use this only on a machine you control.
-
-## Limits
-
-- No multi-tenant isolation. Keys are not scoped to users or teams, and the cache is shared (see above).
-- No SSO, no billing, no per-user quotas beyond the key rate limit.
-- Prompt-injection defenses are basic. The gateway forwards messages as sent.
-- Conversation transcripts in the web UI live only in the browser tab. The server stores turns, but the UI has no endpoint to reload them.
-- Docker Compose and both Dockerfiles have not been built or run in this repository yet.
-- CI is not wired yet. There are no automated checks on push.
-- The Compose file pins Redis 7 and Postgres 17. Local verification used Redis 8.
-
-## Tests and checks
+## Tests
 
 ```bash
-make test   # pytest against Postgres (tollgate_test) and Redis db 1, using the mock provider
-make lint   # ruff check and format check, and mypy on src
+make test   # pytest against Postgres (tollgate_test) and Redis db 1, mock provider
+make lint   # ruff check, ruff format --check, and mypy on src
+cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-`make test` needs the local database and role from Quickstart step 2. Tests set `DEFAULT_PROVIDER=mock`, so no model is required.
-
-For the web UI:
-
-```bash
-npm --prefix web run lint
-cd web && npx tsc --noEmit
-npm --prefix web run build
-```
-
-## Roadmap
-
-- Wire CI once the GitHub Actions setup is available.
-- Scope cache entries by key (or by key owner) so keys cannot share replies.
-- Store conversation history for the web UI to reload.
-- Add a Compose smoke test once Docker is available for verification.
+`make test` needs the `tollgate` / `tollgate_test` databases from `.env.example`. Tests set `DEFAULT_PROVIDER=mock`, so no model is required.
 
 ## Author
 
