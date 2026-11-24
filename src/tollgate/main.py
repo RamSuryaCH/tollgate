@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
 from tollgate import __version__
@@ -48,7 +49,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app = FastAPI(title="Tollgate", version=__version__, lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins or ["http://localhost:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Cache", "Retry-After"],
+    )
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(admin.router)

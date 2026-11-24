@@ -28,6 +28,8 @@ class Settings(BaseSettings):
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    # Comma-separated browser origins allowed to call the API directly.
+    cors_origins: str = "http://localhost:3000"
 
 
 @lru_cache
