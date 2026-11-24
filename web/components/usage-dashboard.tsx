@@ -11,7 +11,18 @@ import {
 import { EMPTY, formatDateTime, formatInt, formatMs, formatPercent, shortId } from "@/lib/format";
 import { STORAGE_KEYS } from "@/lib/config";
 import { useStoredValue } from "@/lib/storage";
-import { Badge, Button, Card, inputClass, Notice, SectionTitle } from "@/components/ui";
+import Link from "next/link";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  FieldLabel,
+  inputClass,
+  Notice,
+  SectionTitle,
+  Skeleton,
+} from "@/components/ui";
 
 interface DateRange {
   from?: string;
@@ -68,49 +79,50 @@ export function UsageDashboard() {
 
   if (!apiKey) {
     return (
-      <Notice>
-        No API key is saved. Paste one in the top bar to see usage for that key. An admin key shows
-        usage across all keys.
-      </Notice>
+      <Card>
+        <EmptyState title="No API key saved">
+          Paste a key into the top bar to see its usage. An admin key shows usage across all keys.
+        </EmptyState>
+      </Card>
     );
   }
 
   const hasRequests = (summary?.requests ?? 0) > 0;
+  const pending = loading && !summary;
 
   return (
     <div className="space-y-8">
-      <form onSubmit={applyRange} className="flex flex-wrap items-end gap-3">
+      <form onSubmit={applyRange} className="flex flex-wrap items-end gap-x-3 gap-y-3">
         <div className="space-y-1.5">
-          <label htmlFor="from" className="block text-sm">
-            From
-          </label>
+          <FieldLabel htmlFor="from">From</FieldLabel>
           <input
             id="from"
             type="date"
             value={fromDraft}
             onChange={(e) => setFromDraft(e.target.value)}
-            className={`${inputClass} w-44 font-mono text-xs`}
+            className={`${inputClass} w-44 font-mono text-[13px]`}
           />
         </div>
         <div className="space-y-1.5">
-          <label htmlFor="to" className="block text-sm">
-            To
-          </label>
+          <FieldLabel htmlFor="to">To</FieldLabel>
           <input
             id="to"
             type="date"
             value={toDraft}
             onChange={(e) => setToDraft(e.target.value)}
-            className={`${inputClass} w-44 font-mono text-xs`}
+            className={`${inputClass} w-44 font-mono text-[13px]`}
           />
         </div>
         <Button type="submit" variant="primary">
           Apply
         </Button>
-        <Button variant="secondary" onClick={resetRange}>
-          Last 7 days
-        </Button>
-        <Button variant="ghost" onClick={() => setRefreshToken((n) => n + 1)} disabled={loading}>
+        <Button onClick={resetRange}>Last 7 days</Button>
+        <Button
+          variant="ghost"
+          className="ml-auto"
+          onClick={() => setRefreshToken((n) => n + 1)}
+          disabled={loading}
+        >
           {loading ? "Refreshing…" : "Refresh"}
         </Button>
       </form>
@@ -127,26 +139,40 @@ export function UsageDashboard() {
             Summary · {range.from || range.to ? `${range.from ?? "start"} to ${range.to ?? "today"}` : "last 7 days"}
           </span>
         </SectionTitle>
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-          <Stat label="Requests" value={summary ? formatInt(summary.requests) : EMPTY} />
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+          <Stat
+            label="Requests"
+            value={summary ? formatInt(summary.requests) : EMPTY}
+            detail="in this range"
+            pending={pending}
+          />
           <Stat
             label="Total tokens"
             value={summary ? formatInt(summary.total_tokens) : EMPTY}
             detail={
               summary
                 ? `${formatInt(summary.prompt_tokens)} in · ${formatInt(summary.completion_tokens)} out`
-                : undefined
+                : "prompt and completion"
             }
+            pending={pending}
           />
           <Stat
             label="Cache hit rate"
             value={summary && hasRequests ? formatPercent(summary.cache_hit_rate) : EMPTY}
+            detail="of requests"
+            pending={pending}
           />
-          <Stat label="p95 latency" value={summary ? formatMs(summary.p95_latency_ms) : EMPTY} />
+          <Stat
+            label="p95 latency"
+            value={summary ? formatMs(summary.p95_latency_ms) : EMPTY}
+            detail="95th percentile"
+            pending={pending}
+          />
           <Stat
             label="Errors"
             value={summary ? formatInt(summary.errors) : EMPTY}
             detail="status 400 or higher"
+            pending={pending}
           />
         </div>
       </section>
@@ -156,13 +182,13 @@ export function UsageDashboard() {
           <SectionTitle>
             <span id="recent-heading">Recent requests</span>
           </SectionTitle>
-          <p className="text-xs text-muted">
+          <p className="text-sm text-muted">
             Latest 50, regardless of the date range. Cache hits count 0 tokens.
           </p>
         </div>
         <Card padding="p-0" className="overflow-x-auto">
           <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="border-b border-rule font-mono text-xs tracking-wide text-muted uppercase">
+            <thead className="border-b border-rule bg-paper/60 font-mono text-xs tracking-wider text-muted uppercase">
               <tr>
                 <th className="px-4 py-3 font-medium">Time</th>
                 <th className="px-4 py-3 font-medium">Model</th>
@@ -175,35 +201,44 @@ export function UsageDashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-rule">
-              {rows.length === 0 && (
+              {rows.length === 0 && loading && <SkeletonRows />}
+              {rows.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-muted">
-                    {loading ? "Loading…" : "No requests yet for this key."}
+                  <td colSpan={8}>
+                    <EmptyState title="No requests yet">
+                      Send a message in the{" "}
+                      <Link href="/" className="text-ink underline decoration-copper underline-offset-4">
+                        Playground
+                      </Link>{" "}
+                      and it will show up here.
+                    </EmptyState>
                   </td>
                 </tr>
               )}
               {rows.map((row) => (
-                <tr key={row.id} className="align-middle">
-                  <td className="px-4 py-2.5 whitespace-nowrap text-muted">
-                    {formatDateTime(row.created_at)}
+                <tr key={row.id} className="align-top transition-colors hover:bg-paper/50">
+                  <td className="px-4 py-3 whitespace-nowrap text-muted">{formatDateTime(row.created_at)}</td>
+                  <td className="max-w-56 px-4 py-3 font-mono text-[13px] break-all">{row.model}</td>
+                  <td className="px-4 py-3 font-mono text-[13px] break-words">{row.provider}</td>
+                  <td className="px-4 py-3">
+                    <Badge tone={row.status >= 400 ? "error" : "ok"}>{row.status}</Badge>
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs">{row.model}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs">{row.provider}</td>
-                  <td className="px-4 py-2.5">
-                    <Badge tone={row.status >= 400 ? "error" : "neutral"}>{row.status}</Badge>
+                  <td className="px-4 py-3 text-right font-mono text-[13px] whitespace-nowrap">
+                    {formatMs(row.latency_ms)}
                   </td>
-                  <td className="px-4 py-2.5 text-right font-mono text-xs">{formatMs(row.latency_ms)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-xs">
+                  <td className="px-4 py-3 text-right font-mono text-[13px]">
                     {formatInt(row.prompt_tokens + row.completion_tokens)}
                   </td>
-                  <td className="px-4 py-2.5">
-                    {row.cache_hit ? (
-                      <Badge tone="hit">HIT</Badge>
+                  <td className="px-4 py-3">
+                    {row.status >= 400 ? (
+                      <span className="text-muted" title="Failed requests have no cache outcome">
+                        {EMPTY}
+                      </span>
                     ) : (
-                      <span className="text-xs text-muted">not a hit</span>
+                      <Badge tone={row.cache_hit ? "hit" : "miss"}>{row.cache_hit ? "HIT" : "MISS"}</Badge>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs" title={row.conversation_id ?? undefined}>
+                  <td className="px-4 py-3 font-mono text-[13px]" title={row.conversation_id ?? undefined}>
                     {shortId(row.conversation_id)}
                   </td>
                 </tr>
@@ -216,12 +251,45 @@ export function UsageDashboard() {
   );
 }
 
-function Stat({ label, value, detail }: { label: string; value: string; detail?: string }) {
+/** Four pulsing rows with the same cell padding as real rows, shown while the first load runs. */
+function SkeletonRows() {
+  return (
+    <>
+      {[0, 1, 2, 3].map((n) => (
+        <tr key={n} aria-hidden="true">
+          <td colSpan={8} className="px-4 py-3.5">
+            <Skeleton className="h-4 w-full" />
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  detail,
+  pending,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  pending: boolean;
+}) {
   return (
     <Card padding="p-4">
-      <p className="font-mono text-xs tracking-wide text-muted uppercase">{label}</p>
-      <p className="mt-2 font-mono text-2xl font-medium text-ink">{value}</p>
-      {detail && <p className="mt-1 text-xs text-muted">{detail}</p>}
+      <p className="font-mono text-xs tracking-wider text-muted uppercase">{label}</p>
+      <div className="mt-2 flex h-8 items-center">
+        {pending ? (
+          <Skeleton className="h-6 w-20" />
+        ) : (
+          <p className="font-mono text-2xl leading-8 font-medium tracking-tight text-ink tabular-nums">
+            {value}
+          </p>
+        )}
+      </div>
+      <p className="mt-1 font-mono text-[13px] text-muted tabular-nums">{detail}</p>
     </Card>
   );
 }

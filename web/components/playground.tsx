@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   ApiError,
@@ -14,7 +15,7 @@ import {
 import { DEFAULT_MODEL, STORAGE_KEYS } from "@/lib/config";
 import { formatInt, shortId } from "@/lib/format";
 import { useStoredValue } from "@/lib/storage";
-import { Badge, Button, Card, inputClass, Notice, SectionTitle } from "@/components/ui";
+import { Badge, Button, inputClass, Notice } from "@/components/ui";
 
 interface ReplyMeta {
   /** Value of the X-Cache response header: HIT, MISS, or BYPASS. */
@@ -71,7 +72,9 @@ export function Playground() {
   const [error, setError] = useState<SendError | null>(null);
 
   const controllerRef = useRef<AbortController | null>(null);
-  const transcriptEnd = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+  const composer = useRef<HTMLTextAreaElement>(null);
 
   const resetChat = useCallback(() => {
     controllerRef.current?.abort();
@@ -93,11 +96,18 @@ export function Playground() {
     return () => controller.current?.abort();
   }, []);
 
-  // Scroll to the newest message when a turn starts, not on every streamed token.
-  const turnCount = messages.length;
+  // Follow the newest text while the reader is at the bottom. Scrolling up pauses following until
+  // they return to the bottom or start a new turn. The transcript has a fixed height, so the page
+  // itself never moves while a reply streams.
   useEffect(() => {
-    if (turnCount > 0) transcriptEnd.current?.scrollIntoView({ block: "end" });
-  }, [turnCount]);
+    const el = scroller.current;
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+  }, [messages, error]);
+
+  function onTranscriptScroll() {
+    const el = scroller.current;
+    if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  }
 
   function updateLast(patch: (message: Message) => Message) {
     setMessages((prev) =>
@@ -158,6 +168,7 @@ export function Playground() {
     const controller = new AbortController();
     const progress: Progress = { text: "" };
     controllerRef.current = controller;
+    stickToBottom.current = true;
     setMessages((prev) => [
       ...prev,
       { role: "user", content: text },
@@ -206,99 +217,120 @@ export function Playground() {
 
   const canSend = Boolean(apiKey) && draft.trim() !== "" && !busy;
 
+  function fillPrompt(text: string) {
+    setDraft(text);
+    composer.current?.focus();
+  }
+
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
-      <div className="flex min-w-0 flex-col rounded-md border border-rule bg-card">
-        <div className="max-h-[62vh] min-h-[360px] space-y-6 overflow-y-auto p-5" aria-live="polite">
-          {!apiKey && (
-            <Notice>
-              No API key is saved. Paste one in the top bar to send messages. Keys are created on the
-              Keys page, and the server shows each plaintext key only once.
-            </Notice>
-          )}
-          {apiKey && messages.length === 0 && (
-            <p className="text-sm text-muted">
-              Send a message to start a conversation. The reply comes from the model configured on
-              the server.
-            </p>
-          )}
-          {messages.map((message, index) => (
-            <article key={index} className="space-y-1.5">
-              <h3 className="font-mono text-xs tracking-wide text-muted uppercase">
-                {message.role === "user" ? "You" : "Assistant"}
-              </h3>
-              <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
-                {message.content}
-                {message.pending && message.content === "" && (
-                  <span className="text-muted">Waiting for the first token…</span>
-                )}
-              </p>
-              {message.meta && <ReplyMetaRow meta={message.meta} />}
-            </article>
-          ))}
-          <div ref={transcriptEnd} />
-        </div>
+    <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-rule bg-card">
+      <div
+        ref={scroller}
+        onScroll={onTranscriptScroll}
+        role="log"
+        aria-label="Conversation"
+        className="flex h-[min(58vh,560px)] min-h-[360px] flex-col gap-5 overflow-y-auto bg-paper/50 px-6 py-6"
+      >
+        {messages.length === 0 && (
+          <div className="m-auto max-w-lg py-4 text-center">
+            {apiKey ? (
+              <>
+                <p className="font-mono text-base font-medium">Start a conversation</p>
+                <p className="mt-1.5 text-[15px] text-muted">
+                  Replies come from the model configured on the server. Try one of these, or write
+                  your own below.
+                </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {EXAMPLE_PROMPTS.map((text) => (
+                    <Button key={text} className="font-normal" onClick={() => fillPrompt(text)}>
+                      {text}
+                    </Button>
+                  ))}
+                </div>
+                <p className="mt-5 text-sm text-muted">
+                  To see a cache hit, set temperature 0, turn streaming off, and send the same
+                  message twice. The transcript lives in this tab and clears on reload.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-mono text-base font-medium">Add an API key to begin</p>
+                <p className="mt-1.5 text-[15px] text-muted">
+                  Paste a key into the top bar. Keys are created on the{" "}
+                  <Link href="/keys" className="text-ink underline decoration-copper underline-offset-4">
+                    Keys page
+                  </Link>
+                  , and the server shows each plaintext key only once.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
+        {messages.map((message, index) => (
+          <MessageItem key={index} message={message} />
+        ))}
 
         {error && (
-          <div className="border-t border-rule p-4">
+          <div className="tg-fade-in">
             <Notice tone="error" role="alert">
-              <p className="font-medium">
-                {error.status === 429 ? "Rate limited" : "Request failed"}
-              </p>
+              <p className="font-medium">{error.status === 429 ? "Rate limited" : "Request failed"}</p>
               <p className="mt-1">{error.message}</p>
               {error.retryAfter !== null && (
-                <p className="mt-1 font-mono text-xs">Retry-After: {error.retryAfter} s</p>
+                <p className="mt-1.5 font-mono text-[13px]">Retry-After: {error.retryAfter} s</p>
               )}
             </Notice>
           </div>
         )}
+      </div>
 
-        <form
-          className="flex items-end gap-3 border-t border-rule p-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-        >
+      <form
+        className="border-t border-rule bg-card p-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send();
+        }}
+      >
+        <div className="flex items-end gap-3">
           <label className="sr-only" htmlFor="composer">
             Message
           </label>
           <textarea
             id="composer"
-            rows={3}
+            ref={composer}
+            rows={2}
             value={draft}
             disabled={!apiKey}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onComposerKeyDown}
-            placeholder={apiKey ? "Write a message. Enter sends, Shift+Enter adds a line." : "Save an API key to start."}
-            className={`${inputClass} min-h-[5rem] resize-y leading-relaxed`}
+            placeholder={
+              apiKey ? "Write a message. Enter sends, Shift+Enter adds a line." : "Save an API key to start."
+            }
+            className={`${inputClass} min-h-[4.5rem] resize-none py-2.5 text-[15px] leading-relaxed`}
           />
           {busy ? (
-            <Button variant="secondary" onClick={() => controllerRef.current?.abort()}>
+            <Button className="h-10 w-24" onClick={() => controllerRef.current?.abort()}>
               Stop
             </Button>
           ) : (
-            <Button type="submit" variant="primary" disabled={!canSend}>
+            <Button type="submit" variant="primary" className="h-10 w-24" disabled={!canSend}>
               Send
             </Button>
           )}
-        </form>
-      </div>
+        </div>
 
-      <aside className="space-y-5">
-        <Card className="space-y-4">
-          <SectionTitle>Settings</SectionTitle>
-          <Field label="Model" htmlFor="model">
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+          <InlineField label="Model" htmlFor="model">
             <input
               id="model"
               type="text"
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              className={`${inputClass} font-mono text-xs`}
+              className={`${compactInput} w-48`}
               placeholder="Server default"
             />
-          </Field>
-          <Field label="Temperature" htmlFor="temperature">
+          </InlineField>
+          <InlineField label="Temperature" htmlFor="temperature">
             <input
               id="temperature"
               type="number"
@@ -307,10 +339,10 @@ export function Playground() {
               step={0.1}
               value={temperature}
               onChange={(e) => setTemperature(e.target.value)}
-              className={`${inputClass} font-mono text-xs`}
+              className={`${compactInput} w-20`}
             />
-          </Field>
-          <Field label="Max tokens" htmlFor="max-tokens">
+          </InlineField>
+          <InlineField label="Max tokens" htmlFor="max-tokens">
             <input
               id="max-tokens"
               type="number"
@@ -319,44 +351,46 @@ export function Playground() {
               step={1}
               value={maxTokens}
               onChange={(e) => setMaxTokens(e.target.value)}
-              className={`${inputClass} font-mono text-xs`}
-              placeholder="Model default"
+              className={`${compactInput} w-28`}
+              placeholder="Default"
             />
-          </Field>
-          <label className="flex items-center justify-between gap-3 text-sm">
-            <span>Stream tokens</span>
+          </InlineField>
+          <label
+            className="flex h-8 items-center gap-2 text-sm"
+            title="Caching applies only when temperature is 0, streaming is off, and the key allows caching. Other requests show X-Cache: BYPASS."
+          >
             <input
               type="checkbox"
               checked={stream}
               onChange={(e) => setStream(e.target.checked)}
               className="size-4 accent-copper"
             />
+            <span>Stream</span>
           </label>
-          <p className="text-xs leading-relaxed text-muted">
-            Caching applies only when temperature is 0, streaming is off, and the key allows
-            caching. Other requests show X-Cache: BYPASS.
-          </p>
-        </Card>
 
-        <Card className="space-y-3">
-          <SectionTitle>Conversation</SectionTitle>
-          <p className="font-mono text-xs text-muted" title={conversationId ?? undefined}>
-            {conversationId ? `id ${shortId(conversationId, 8)}` : "Not started"}
-          </p>
-          <Button variant="secondary" className="w-full" onClick={resetChat} disabled={busy}>
-            New chat
-          </Button>
-          <p className="text-xs leading-relaxed text-muted">
-            The server keeps each turn for usage history. The transcript shown here lives only in
-            this tab and clears on reload.
-          </p>
-        </Card>
-      </aside>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="font-mono text-[13px] text-muted" title={conversationId ?? undefined}>
+              {conversationId ? `chat ${shortId(conversationId, 8)}` : "no chat yet"}
+            </span>
+            <Button className="h-8 px-3" onClick={resetChat} disabled={busy}>
+              New chat
+            </Button>
+          </div>
+        </div>
+      </form>
     </div>
   );
 }
 
-function Field({
+const compactInput = `${inputClass} h-8 py-1 font-mono text-[13px]`;
+
+const EXAMPLE_PROMPTS = [
+  "Explain what a rate limiter does in two sentences.",
+  "Write a haiku about toll booths.",
+  "List three uses for a response cache.",
+];
+
+function InlineField({
   label,
   htmlFor,
   children,
@@ -366,8 +400,8 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm text-ink">
+    <div className="flex items-center gap-2">
+      <label htmlFor={htmlFor} className="text-sm text-muted">
         {label}
       </label>
       {children}
@@ -375,10 +409,35 @@ function Field({
   );
 }
 
+function MessageItem({ message }: { message: Message }) {
+  const isUser = message.role === "user";
+  const waiting = message.pending && message.content === "";
+  return (
+    <article className={`tg-fade-in flex flex-col gap-1.5 ${isUser ? "items-end" : "items-start"}`}>
+      <h3 className="font-mono text-xs tracking-wider text-muted uppercase">
+        {isUser ? "You" : "Assistant"}
+      </h3>
+      <div
+        className={`max-w-[46rem] rounded-lg px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] ${
+          isUser
+            ? "rounded-tr-sm bg-ink text-paper"
+            : "rounded-tl-sm border border-rule bg-card text-ink shadow-[0_1px_0_rgba(28,25,23,0.04)]"
+        }`}
+      >
+        {waiting && <span className="text-muted">Waiting for the first token</span>}
+        {message.content}
+        {message.pending && <span aria-hidden="true" className="tg-caret" />}
+      </div>
+      {/* Always rendered for replies, so the row finishing does not push the transcript. */}
+      {!isUser && <div className="min-h-6">{message.meta && <ReplyMetaRow meta={message.meta} />}</div>}
+    </article>
+  );
+}
+
 function ReplyMetaRow({ meta }: { meta: ReplyMeta }) {
   const tone = meta.cache && meta.cache in cacheTone ? cacheTone[meta.cache as keyof typeof cacheTone] : "neutral";
   return (
-    <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted">
+    <div className="flex flex-wrap items-center gap-2 font-mono text-[13px] text-muted">
       <Badge tone={tone}>X-Cache: {meta.cache ?? "n/a"}</Badge>
       {meta.usage ? (
         <span>

@@ -5,9 +5,11 @@
   --color-card: #fbf9f4;
   --color-ink: #1c1917;
   --color-muted: #57534e;
+  --color-faint: #78716c;
   --color-rule: #d9d2c5;
   --color-copper: #b4532a;
   --color-copper-deep: #954320;
+  --color-copper-wash: #f6e6da;
   --color-error: #9f1d1d;
   --color-ok: #3f6212;
 
@@ -19,10 +21,97 @@
   html {
     background: var(--color-paper);
     color: var(--color-ink);
+    /* Keep the page from shifting sideways when a page gains or loses its scrollbar. */
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  ::selection {
+    background: var(--color-copper);
+    color: #fff;
   }
 
   :focus-visible {
     outline: 2px solid var(--color-copper);
     outline-offset: 2px;
+  }
+
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Motion is limited to opacity, and never changes an element's size. */
+@keyframes tg-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes tg-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes tg-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@layer components {
+  .tg-fade-in {
+    animation: tg-fade-in 160ms ease-out both;
+  }
+
+  /* Blinking block shown at the end of a reply while it streams. Fixed width, so no reflow. */
+  .tg-caret {
+    display: inline-block;
+    width: 0.5em;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: var(--color-copper);
+    animation: tg-caret 1.1s steps(1) infinite;
+  }
+
+  .tg-skeleton {
+    border-radius: 3px;
+    background: var(--color-rule);
+    animation: tg-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tg-fade-in,
+  .tg-skeleton {
+    animation: none;
+  }
+
+  .tg-caret {
+    animation: none;
+  }
+
+  * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

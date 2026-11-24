@@ -13,7 +13,7 @@ type Status =
   | { kind: "down"; detail: string };
 
 const dotClass: Record<Status["kind"], string> = {
-  checking: "bg-rule",
+  checking: "bg-faint/50",
   ok: "bg-ok",
   degraded: "bg-copper",
   down: "bg-error",
@@ -68,14 +68,14 @@ export function ConnectionStatus() {
 
   return (
     <div
-      className="flex items-center gap-2 font-mono text-xs text-muted"
+      className="flex h-8 items-center gap-2 font-mono text-[13px] text-muted"
       title={title}
       role="status"
       aria-live="polite"
     >
       <span aria-hidden="true" className={`inline-block size-2 rounded-full ${dotClass[status.kind]}`} />
       <span>{label}</span>
-      <span className="hidden text-muted/80 xl:inline">{API_URL.replace(/^https?:\/\//, "")}</span>
+      <span className="hidden text-muted xl:inline">{API_URL.replace(/^https?:\/\//, "")}</span>
     </div>
   );
 }

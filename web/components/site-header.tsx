@@ -11,42 +11,47 @@ const NAV = [
   { href: "/keys", label: "Keys" },
 ] as const;
 
+/** One 56px bar: product name and nav on the left, connection status and API key on the right. */
 export function SiteHeader() {
   const pathname = usePathname();
 
   return (
-    <header className="border-b border-rule">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-8 gap-y-3 px-6 pt-5 pb-4">
-        <div>
-          <Link href="/" className="font-mono text-lg font-semibold tracking-tight text-ink">
+    <header className="border-b border-rule bg-card/60">
+      <div className="mx-auto flex min-h-14 max-w-6xl flex-wrap items-stretch justify-between gap-x-8 px-6">
+        <div className="flex items-stretch gap-8">
+          <Link
+            href="/"
+            className="flex items-center gap-2.5 rounded-sm font-mono text-lg font-semibold tracking-tight text-ink"
+          >
+            <span aria-hidden="true" className="size-2.5 rounded-[2px] bg-copper" />
             Tollgate
           </Link>
-          <p className="text-sm text-muted">A self-hosted chat gateway.</p>
+          <nav aria-label="Main" className="flex items-stretch gap-6">
+            {NAV.map((item) => {
+              const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`-mb-px flex items-center border-b-2 text-sm transition-colors ${
+                    active
+                      ? "border-copper font-medium text-ink"
+                      : "border-transparent text-muted hover:text-ink"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
         </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+        <div className="flex items-center gap-5 py-2">
           <ConnectionStatus />
+          <span aria-hidden="true" className="h-5 w-px bg-rule" />
           <ApiKeyControl />
         </div>
       </div>
-      <nav aria-label="Main" className="mx-auto flex max-w-6xl gap-6 px-6">
-        {NAV.map((item) => {
-          const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={`-mb-px border-b-2 pb-2.5 text-sm transition-colors ${
-                active
-                  ? "border-copper font-medium text-ink"
-                  : "border-transparent text-muted hover:text-ink"
-              }`}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
     </header>
   );
 }
