@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f4efe6;
+  --color-card: #fbf9f4;
+  --color-ink: #1c1917;
+  --color-muted: #57534e;
+  --color-rule: #d9d2c5;
+  --color-copper: #b4532a;
+  --color-copper-deep: #954320;
+  --color-error: #9f1d1d;
+  --color-ok: #3f6212;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html {
+    background: var(--color-paper);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-copper);
+    outline-offset: 2px;
+  }
+}

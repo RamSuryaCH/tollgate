@@ -1,0 +1,9 @@
+# Host build output and dependencies. node_modules from macOS must not reach the Linux image.
+node_modules
+.next
+out
+*.tsbuildinfo
+.env*
+npm-debug.log*
+Dockerfile
+.dockerignore

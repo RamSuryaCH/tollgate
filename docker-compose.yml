@@ -1,7 +1,7 @@
 # Tollgate stack.
 #   docker compose up -d                       -> api + postgres + redis (api needs a provider)
 #   docker compose --profile ollama up -d      -> also runs Ollama locally
-#   docker compose --profile web up -d         -> also runs the web UI (./web, added in a later pass)
+#   docker compose --profile web up -d         -> also runs the web UI on http://localhost:3000
 # Without the ollama profile, set DEFAULT_PROVIDER=mock in .env to try the API.
 name: tollgate
 
@@ -69,13 +69,14 @@ services:
     volumes:
       - ollama:/root/.ollama
 
-  # Frontend service. The ./web directory does not exist yet; this service only starts with
-  # --profile web, so the default stack is unaffected.
+  # Frontend (Next.js). Only starts with --profile web. NEXT_PUBLIC_API_URL is a build arg because
+  # Next.js inlines it into the browser bundle. The browser calls the API on the published port.
   web:
     profiles: ["web"]
-    build: ./web
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:
