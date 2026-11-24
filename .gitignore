@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.demo-key
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+previews/
+node_modules/
+web/.next/
+dist/
+build/
+*.egg-info/
+*.rdb

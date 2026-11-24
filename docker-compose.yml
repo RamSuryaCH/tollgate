@@ -1,0 +1,86 @@
+# Tollgate stack.
+#   docker compose up -d                       -> api + postgres + redis (api needs a provider)
+#   docker compose --profile ollama up -d      -> also runs Ollama locally
+#   docker compose --profile web up -d         -> also runs the web UI (./web, added in a later pass)
+# Without the ollama profile, set DEFAULT_PROVIDER=mock in .env to try the API.
+name: tollgate
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: tollgate
+      POSTGRES_PASSWORD: tollgate
+      POSTGRES_DB: tollgate
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tollgate -d tollgate"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+asyncpg://tollgate:tollgate@postgres:5432/tollgate
+      REDIS_URL: redis://redis:6379/0
+      DEFAULT_PROVIDER: ${DEFAULT_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-llama3.2:3b}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-change-me-admin}
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-3600}
+      DEFAULT_RATE_LIMIT_RPM: ${DEFAULT_RATE_LIMIT_RPM:-60}
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && uvicorn tollgate.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  # Frontend service. The ./web directory does not exist yet; this service only starts with
+  # --profile web, so the default stack is unaffected.
+  web:
+    profiles: ["web"]
+    build: ./web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  ollama:
